@@ -1,123 +1,191 @@
 package com.dekogen.gdeploy.integration.metaapi
 
 import io.swagger.v3.oas.models.OpenAPI
-import org.mockito.Mockito
-import org.springdoc.core.customizers.OpenApiBuilderCustomizer
-import org.springdoc.core.customizers.OperationCustomizer
-import org.springdoc.core.customizers.ServerBaseUrlCustomizer
-import org.springdoc.core.customizers.SpringDocCustomizers
-import org.springdoc.core.providers.JavadocProvider
-import org.springdoc.core.providers.SpringDocProviders
-import org.springdoc.core.properties.SpringDocConfigProperties
-import org.springdoc.core.service.AbstractRequestService
-import org.springdoc.core.service.GenericResponseService
-import org.springdoc.core.service.OpenAPIService
-import org.springdoc.core.service.OperationService
-import org.springdoc.core.service.SecurityService
-import org.springdoc.core.utils.PropertyResolverUtils
-import org.springdoc.webmvc.api.OpenApiWebMvcResource
-import org.springframework.beans.factory.ObjectFactory
-import org.springframework.beans.factory.annotation.Qualifier
-import org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration
-import org.springframework.context.ApplicationContext
-import org.springframework.format.support.FormattingConversionService
+import io.swagger.v3.oas.models.Operation
+import io.swagger.v3.oas.models.PathItem
+import io.swagger.v3.oas.models.Paths
+import io.swagger.v3.oas.models.info.Info
+import io.swagger.v3.oas.models.media.*
+import io.swagger.v3.oas.models.parameters.Parameter
+import io.swagger.v3.oas.models.parameters.RequestBody as OpenApiRequestBody
+import io.swagger.v3.oas.models.responses.ApiResponse
+import io.swagger.v3.oas.models.responses.ApiResponses
 import org.springframework.stereotype.Component
-import org.springframework.web.accept.ContentNegotiationManager
-import org.springframework.web.servlet.handler.AbstractHandlerMethodMapping
-import org.springframework.web.servlet.resource.ResourceUrlProvider
-import java.lang.reflect.Proxy
-import java.util.*
+import org.springframework.web.bind.annotation.*
+import java.lang.reflect.Method
+import java.lang.reflect.Parameter as JavaParameter
 
 @Component
-class MetaFactory(
-    @Qualifier("mvcContentNegotiationManager") private val contentNegotiationManager: ContentNegotiationManager,
-    @Qualifier("mvcConversionService") private val conversionService: FormattingConversionService,
-    @Qualifier("mvcResourceUrlProvider") private val resourceUrlProvider: ResourceUrlProvider,
-    private val enableWebMvcConfiguration: WebMvcAutoConfiguration.EnableWebMvcConfiguration,
-    private val openAPI: Optional<OpenAPI>?,
-    private val context: ApplicationContext,
-    private val securityParser: SecurityService?,
-    private val springDocConfigProperties: SpringDocConfigProperties?,
-    private val propertyResolverUtils: PropertyResolverUtils?,
-    private val openApiBuilderCustomisers: Optional<List<OpenApiBuilderCustomizer>>?,
-    private val serverBaseUrlCustomizers: Optional<List<ServerBaseUrlCustomizer>>?,
-    private val javadocProvider: Optional<JavadocProvider>?,
-    private val requestBuilder: AbstractRequestService?,
-    private val responseBuilder: GenericResponseService?,
-    private val operationParser: OperationService?,
-    private val springDocProviders: SpringDocProviders?,
-    private val springDocCustomizers: SpringDocCustomizers?
-) {
-    fun createOpenApiForClient(clientClass: Class<*>): OpenApiWebMvcResource {
-        val clientMappings = clientClass.constructors.first().parameters
-            .map { parameter -> parameter.type }
-            .toTypedArray()
+class MetaFactory {
+    fun createOpenApiForClient(clientClass: Class<*>): OpenAPI {
+        val mappings = clientClass.constructors
+            .flatMap { constructor -> constructor.parameterTypes.toList() }
+            .distinct()
 
-        val namedFakeControllers = clientMappings.map { mapping ->
-            val mname = mapping.simpleName
+        val paths = Paths()
+        mappings.forEach { mapping ->
+            val rootPath = mapping.getAnnotation(RequestMapping::class.java)
+                ?.firstPath()
+                .orEmpty()
 
-            val virtualControllerIdentity = Any()
-
-            mname to Proxy.newProxyInstance(
-                clientClass.classLoader,
-                arrayOf(mapping, PseudoController::class.java)
-            ) { proxy, method, args ->
-                return@newProxyInstance when (method.name) {
-                    "toString" -> mname
-                    "equals" -> proxy == args[0]
-                    "hashCode" -> virtualControllerIdentity.hashCode()
-                    else -> null
+            mapping.methods
+                .mapNotNull { method -> createOperationMapping(rootPath, method) }
+                .forEach { operationMapping ->
+                    val pathItem = paths[operationMapping.path] ?: PathItem().also {
+                        paths.addPathItem(operationMapping.path, it)
+                    }
+                    operationMapping.applyTo(pathItem)
                 }
-            }
-        }.toList()
-
-
-        val springMvcHandlerMapping = enableWebMvcConfiguration.requestMappingHandlerMapping(
-            contentNegotiationManager,
-            conversionService,
-            resourceUrlProvider
-        )
-
-        val detectHandlerMethods = AbstractHandlerMethodMapping::class.java
-            .getDeclaredMethod("detectHandlerMethods", Any::class.java)
-        detectHandlerMethods.trySetAccessible()
-
-        namedFakeControllers.onEach {
-            detectHandlerMethods.invoke(springMvcHandlerMapping, it.second)
         }
 
-        val fakeControllerMap = namedFakeControllers.associate { it.first to it.second }
+        return OpenAPI()
+            .openapi("3.1.0")
+            .info(Info().title("${clientClass.simpleName} API metadata").version("v0"))
+            .paths(paths)
+    }
 
-        val openapi = OpenApiWebMvcResource(
-            ObjectFactory {
-                val contextMock = Mockito.mock(ApplicationContext::class.java)
-                Mockito.`when`(contextMock.getBeansWithAnnotation(Mockito.any())).thenReturn(emptyMap())
-                Mockito.`when`(contextMock.containsBean(Mockito.any())).thenReturn(false)
-                Mockito.`when`(contextMock.getBean(PropertyResolverUtils::class.java))
-                    .thenAnswer { context.getBean(PropertyResolverUtils::class.java) }
+    private fun createOperationMapping(rootPath: String, method: Method): OperationMapping? {
+        val mapping = method.mappingInfo() ?: return null
+        val path = joinPaths(rootPath, mapping.path)
+        val operation = Operation()
+            .operationId(method.name)
+            .responses(ApiResponses().addApiResponse("200", responseFor(method.returnType)))
 
-                val api = OpenAPIService(
-                    openAPI,
-                    securityParser,
-                    springDocConfigProperties,
-                    propertyResolverUtils,
-                    openApiBuilderCustomisers,
-                    serverBaseUrlCustomizers,
-                    javadocProvider
+        method.parameters.forEach { parameter ->
+            parameter.toOpenApiParameter(path)?.let(operation::addParametersItem)
+            parameter.toOpenApiRequestBody()?.let(operation::requestBody)
+        }
+
+        return OperationMapping(mapping.httpMethod, path, operation)
+    }
+
+    private fun responseFor(returnType: Class<*>): ApiResponse {
+        val response = ApiResponse().description("OK")
+        if (returnType != Void.TYPE && returnType != Unit::class.java) {
+            response.content(
+                Content().addMediaType(
+                    "application/json",
+                    MediaType().schema(schemaFor(returnType))
                 )
-                api.setApplicationContext(contextMock)
-                api.mappingsMap.clear()
-                api.addMappings(fakeControllerMap)
-                api
-            },
-            requestBuilder,
-            responseBuilder,
-            operationParser,
-            springDocConfigProperties,
-            springDocProviders,
-            springDocCustomizers
-        )
+            )
+        }
+        return response
+    }
 
-        return openapi
+    private fun JavaParameter.toOpenApiParameter(path: String): Parameter? {
+        getAnnotation(PathVariable::class.java)?.let {
+            val name = it.value.ifBlank { it.name }.ifBlank { pathVariableName(path) ?: name }
+            return Parameter()
+                .name(name)
+                .`in`("path")
+                .required(true)
+                .schema(schemaFor(type))
+        }
+
+        getAnnotation(RequestParam::class.java)?.let {
+            val name = it.value.ifBlank { it.name }.ifBlank { name }
+            return Parameter()
+                .name(name)
+                .`in`("query")
+                .required(it.required)
+                .schema(schemaFor(type))
+        }
+
+        getAnnotation(RequestHeader::class.java)?.let {
+            val name = it.value.ifBlank { it.name }.ifBlank { name }
+            return Parameter()
+                .name(name)
+                .`in`("header")
+                .required(it.required)
+                .schema(schemaFor(type))
+        }
+
+        return null
+    }
+
+    private fun JavaParameter.toOpenApiRequestBody(): OpenApiRequestBody? {
+        getAnnotation(RequestBody::class.java) ?: return null
+        return OpenApiRequestBody()
+            .required(true)
+            .content(
+                Content().addMediaType(
+                    "application/json",
+                    MediaType().schema(schemaFor(type))
+                )
+            )
+    }
+
+    private fun schemaFor(type: Class<*>): Schema<*> {
+        return when {
+            type == String::class.java -> StringSchema()
+            type == Boolean::class.java || type == java.lang.Boolean::class.java -> BooleanSchema()
+            type == Int::class.java || type == Integer::class.java ||
+                type == Long::class.java || type == java.lang.Long::class.java -> IntegerSchema()
+            type == Float::class.java || type == java.lang.Float::class.java ||
+                type == Double::class.java || type == java.lang.Double::class.java -> NumberSchema()
+            Collection::class.java.isAssignableFrom(type) -> ArraySchema().items(ObjectSchema())
+            type.isArray -> ArraySchema().items(schemaFor(type.componentType))
+            else -> objectSchemaFor(type)
+        }
+    }
+
+    private fun objectSchemaFor(type: Class<*>): ObjectSchema {
+        val schema = ObjectSchema()
+        type.declaredFields
+            .filterNot { it.isSynthetic }
+            .filterNot { it.name.startsWith("$") }
+            .forEach { field ->
+                schema.addProperties(field.name, schemaFor(field.type))
+            }
+        return schema
+    }
+
+    private fun Method.mappingInfo(): MethodMapping? {
+        getAnnotation(GetMapping::class.java)?.let { return MethodMapping("GET", it.firstPath()) }
+        getAnnotation(PostMapping::class.java)?.let { return MethodMapping("POST", it.firstPath()) }
+        getAnnotation(PutMapping::class.java)?.let { return MethodMapping("PUT", it.firstPath()) }
+        getAnnotation(DeleteMapping::class.java)?.let { return MethodMapping("DELETE", it.firstPath()) }
+        getAnnotation(RequestMapping::class.java)?.let {
+            val httpMethod = it.method.firstOrNull()?.name ?: "GET"
+            return MethodMapping(httpMethod, it.firstPath())
+        }
+        return null
+    }
+
+    private fun RequestMapping.firstPath(): String = path.firstOrNull() ?: value.firstOrNull().orEmpty()
+    private fun GetMapping.firstPath(): String = path.firstOrNull() ?: value.firstOrNull().orEmpty()
+    private fun PostMapping.firstPath(): String = path.firstOrNull() ?: value.firstOrNull().orEmpty()
+    private fun PutMapping.firstPath(): String = path.firstOrNull() ?: value.firstOrNull().orEmpty()
+    private fun DeleteMapping.firstPath(): String = path.firstOrNull() ?: value.firstOrNull().orEmpty()
+
+    private fun joinPaths(rootPath: String, methodPath: String): String {
+        val parts = listOf(rootPath, methodPath)
+            .map { it.trim('/') }
+            .filter { it.isNotBlank() }
+        return "/" + parts.joinToString("/")
+    }
+
+    private fun pathVariableName(path: String): String? {
+        val start = path.indexOf('{')
+        val end = path.indexOf('}', start + 1)
+        return if (start >= 0 && end > start) path.substring(start + 1, end) else null
+    }
+
+    private data class MethodMapping(val httpMethod: String, val path: String)
+
+    private data class OperationMapping(
+        val httpMethod: String,
+        val path: String,
+        val operation: Operation
+    ) {
+        fun applyTo(pathItem: PathItem) {
+            when (httpMethod) {
+                "GET" -> pathItem.get(operation)
+                "POST" -> pathItem.post(operation)
+                "PUT" -> pathItem.put(operation)
+                "DELETE" -> pathItem.delete(operation)
+                else -> pathItem.get(operation)
+            }
+        }
     }
 }
