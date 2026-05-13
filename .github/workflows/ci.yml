@@ -1,0 +1,53 @@
+name: Проверка проекта
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Сборка и тесты
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Получить репозиторий
+        uses: actions/checkout@v4
+
+      - name: Настроить Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Сделать Gradle wrappers исполняемыми
+        run: |
+          chmod +x api-markup/gradlew
+          chmod +x spring-boot-integration/gradlew
+          chmod +x demo/demo-shop-api/gradlew
+          chmod +x demo/demo-shop-cart/gradlew
+          chmod +x demo/demo-shop-product/gradlew
+          chmod +x orchestrator-service/gradlew
+
+      - name: Опубликовать api-markup
+        working-directory: api-markup
+        run: ./gradlew --no-daemon publishToMavenLocal
+
+      - name: Опубликовать Spring Boot integration
+        working-directory: spring-boot-integration
+        run: ./gradlew --no-daemon publishToMavenLocal
+
+      - name: Опубликовать demo API
+        working-directory: demo/demo-shop-api
+        run: ./gradlew --no-daemon publishToMavenLocal
+
+      - name: Проверить demo cart service
+        working-directory: demo/demo-shop-cart
+        run: ./gradlew --no-daemon test
+
+      - name: Проверить demo product service
+        working-directory: demo/demo-shop-product
+        run: ./gradlew --no-daemon test
+
+      - name: Проверить orchestrator service
+        working-directory: orchestrator-service
+        run: ./gradlew --no-daemon test

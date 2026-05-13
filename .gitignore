@@ -1,0 +1,10 @@
+.gradle/
+.gradle-user-home/
+.m2-repository/
+.vscode/
+
+build/
+bin/
+out/
+
+*.iml

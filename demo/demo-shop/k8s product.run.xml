@@ -1,0 +1,22 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="k8s product" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="docker push 10.0.10.1:5000/gd-demo-shop-product &amp;&amp; kubectl rollout restart -n gd-demo-shop deployment/demo-shop-product-v1 &amp;&amp; echo &quot;waiting for deployment&quot; &amp;&amp; sleep 15 &amp;&amp; kubectl logs deploy/demo-shop-product-v1 -n gd-demo-shop -c shop-product -f" />
+    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+    <option name="SCRIPT_PATH" value="" />
+    <option name="SCRIPT_OPTIONS" value="" />
+    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="INDEPENDENT_INTERPRETER_PATH" value="true" />
+    <option name="INTERPRETER_PATH" value="" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
+    <option name="EXECUTE_SCRIPT_FILE" value="false" />
+    <envs />
+    <method v="2">
+      <option name="Gradle.BeforeRunTask" enabled="false" tasks="publishToMavenLocal" externalProjectPath="$PROJECT_DIR$/api-markup" vmOptions="" scriptParameters="" />
+      <option name="Gradle.BeforeRunTask" enabled="true" tasks="publishToMavenLocal" externalProjectPath="$PROJECT_DIR$/spring-boot-integration" vmOptions="" scriptParameters="" />
+      <option name="Gradle.BeforeRunTask" enabled="false" tasks="publishToMavenLocal" externalProjectPath="$PROJECT_DIR$/demo/demo-shop-api" vmOptions="" scriptParameters="" />
+      <option name="Gradle.BeforeRunTask" enabled="false" tasks="bootBuildImage --imageName=10.0.10.1:5000/gd-demo-shop-product" externalProjectPath="$PROJECT_DIR$/demo/demo-shop-product" vmOptions="" scriptParameters="" />
+    </method>
+  </configuration>
+</component>

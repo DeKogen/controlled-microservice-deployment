@@ -1,0 +1,33 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: virtualdeployments.granular-deployment.dekogen.com
+spec:
+  group: granular-deployment.dekogen.com
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                boundService:
+                  type: string
+                versions:
+                  type: array
+                  items:
+                    type: string
+                deployment:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+  scope: Namespaced
+  names:
+    plural: virtualdeployments
+    singular: virtualdeployment
+    kind: VirtualDeployment
+    shortNames:
+      - vd

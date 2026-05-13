@@ -1,0 +1,29 @@
+apiVersion: networking.istio.io/v1beta1
+kind: EnvoyFilter
+metadata:
+  name: version-header-filter
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      istio: ingressgateway
+  configPatches:
+    - applyTo: SIDECAR_OUTBOUND
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: "envoy.http_connection_manager"
+              subFilter:
+                name: "envoy.router"
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.lua
+          typed_config:
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua"
+            inlineCode: |
+              function envoy_on_request(request_handle)
+                  request_handle:headers():add("customer-id", "alice")
+              end

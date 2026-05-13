@@ -1,0 +1,120 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  namespace: gd-demo-shop
+  name: demo-shop-product
+spec:
+  hosts:
+    - demo-shop-product
+  http:
+    - route:
+        - destination:
+            host: demo-shop-product
+            subset: v3
+---
+
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  namespace: gd-demo-shop
+  name: demo-shop-product-ingress
+spec:
+  hosts:
+    - '*'
+  gateways:
+    - demo-shop-gateway
+  http:
+    - match:
+        - uri:
+            prefix: "/product/"
+      rewrite:
+        uri: "/"
+      route:
+        - destination:
+            host: demo-shop-product
+            subset: v2
+---
+
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: demo-shop-product
+  namespace: gd-demo-shop
+spec:
+  host: demo-shop-product
+  subsets: []
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-shop-product
+  namespace: gd-demo-shop
+spec:
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http-web
+  selector:
+    app: demo-shop-product
+  type: ClusterIP
+---
+
+apiVersion: granular-deployment.dekogen.com/v1alpha1
+kind: VirtualDeployment
+metadata:
+  name: demo-shop-product
+  namespace: gd-demo-shop
+spec:
+  boundService: demo-shop-product
+  versions:
+    - v1
+    - v2
+    - v3
+  deployment:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: demo-shop-product
+    strategy:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        labels:
+          app: demo-shop-product
+      spec:
+        containers:
+          - image: 10.0.10.1:5000/gd-demo-shop-product
+            imagePullPolicy: Always
+            name: shop-product
+            ports:
+              - containerPort: 8080
+            readinessProbe:
+              failureThreshold: 5
+              httpGet:
+                path: /actuator/health
+                port: 8080
+              periodSeconds: 5
+              successThreshold: 2
+              timeoutSeconds: 3
+              initialDelaySeconds: 30
+            livenessProbe:
+              failureThreshold: 3
+              httpGet:
+                path: /actuator/health
+                port: 8080
+              periodSeconds: 5
+              successThreshold: 1
+              timeoutSeconds: 3
+              initialDelaySeconds: 30
+            resources:
+              requests:
+                cpu: 300m
+                memory: 512Mi
+              limits:
+                cpu: 800m
+                memory: 1Gi
+---
